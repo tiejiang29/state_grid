@@ -1,7 +1,7 @@
 {
   "domain": "state_grid",
   "name": "国家电网",
-  "version": "0.7.9",
+  "version": "0.7.10",
   "documentation": "https://github.com/tiejiang29/state_grid",
   "requirements": [
     "openai>=1.0.0",

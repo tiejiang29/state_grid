@@ -174,11 +174,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 elif key in current and current[key]:
                     new_data[key] = current[key]
 
-            # 刷新间隔（小时）
+            # 刷新间隔（小时）—— 文本框输入，转 int 后 clamp 到 12-48
             refresh_interval = user_input.get("refresh_interval")
             if refresh_interval:
                 try:
-                    new_data["refresh_interval"] = max(12, int(refresh_interval))
+                    hours = int(str(refresh_interval).strip())
+                    new_data["refresh_interval"] = max(12, min(48, hours))
                 except (ValueError, TypeError):
                     pass
 
@@ -205,7 +206,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
             return self.async_create_entry(title="", data=new_data)
 
-        # 安全提取默认值（处理 None、非字符串、非数字等情况）
+        # 安全提取默认值（处理 None、非字符串等情况）
         def _str(key, fallback=""):
             v = current.get(key)
             if v is None:
@@ -213,15 +214,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             if isinstance(v, str):
                 return v
             return str(v)
-
-        def _int(key, fallback=12):
-            v = current.get(key)
-            if v is None:
-                return fallback
-            try:
-                return max(12, int(v))
-            except (ValueError, TypeError):
-                return fallback
 
         # 构建表单：所有字段都给安全的默认值
         data_schema = vol.Schema(
@@ -244,9 +236,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 ): selector({"text": {"type": "text"}}),
                 vol.Optional(
                     "refresh_interval",
-                    default=_int("refresh_interval", 12),
-                    description="刷新间隔（小时，12-48）",
-                ): vol.All(vol.Coerce(int), vol.Clamp(min=12, max=48)),
+                    default=_str("refresh_interval", "12"),
+                    description="刷新间隔（小时，填 12-48 之间的整数）",
+                ): selector({"text": {"type": "text"}}),
             }
         )
         return self.async_show_form(step_id="init", data_schema=data_schema)
