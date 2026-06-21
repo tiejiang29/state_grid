@@ -150,20 +150,18 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     """集成选项：可以修改 LLM 配置和刷新间隔。"""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        # 兼容不同 HA 版本：
-        # - 新版 HA：OptionsFlow 基类已把 config_entry 设为只读 property（无 setter），
-        #   必须调用 super().__init__(config_entry) 让基类自己存储
-        # - 旧版 HA：OptionsFlow.__init__() 不接受参数，自己赋值 self.config_entry
-        try:
-            super().__init__(config_entry)
-        except TypeError:
-            # 旧版 HA：基类 __init__ 不接受参数
-            self.config_entry = config_entry
+        # 新版 HA（Python 3.14 + 最新 HA）的 OptionsFlow 基类把 config_entry
+        # 设为只读 property（无 setter），同时基类没有定义接受参数的 __init__，
+        # 所以：
+        #   - super().__init__(config_entry) 会触发 object.__init__() 报 TypeError
+        #   - self.config_entry = config_entry 会触发 AttributeError
+        # 解决方案：不碰 config_entry 这个名字，用自己的私有属性 _entry 保存。
+        self._entry = config_entry
 
     async def async_step_init(self, user_input=None):
         """选项配置入口。"""
         # 当前配置：优先 entry.options，其次 entry.data
-        current = {**(self.config_entry.data or {}), **(self.config_entry.options or {})}
+        current = {**(self._entry.data or {}), **(self._entry.options or {})}
 
         if user_input is not None:
             # 合并新配置（空字符串表示不修改，保留原值）
