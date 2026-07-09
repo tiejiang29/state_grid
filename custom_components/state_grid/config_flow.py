@@ -69,9 +69,9 @@ class StateGridOnnxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     ):
                         LOGGER.info("[配置流程] 手机号遇RK001流控，自动降级到邮箱登录: %s", email)
                         try:
-                            import hashlib
-                            pwd_md5 = hashlib.md5(password.encode()).hexdigest().upper()
-                            result = await dc._login_with_email_fallback(pwd_md5, retry=2)
+                            # 邮箱降级：直接用 password_login(email, ...)
+                            # （原代码调用的 _login_with_email_fallback 方法不存在，是隐藏 bug）
+                            result = await dc.password_login(email, password, encode=False, retry=2)
                         except Exception as fallback_exc:
                             LOGGER.exception("[配置流程] 邮箱降级登录异常: %s", fallback_exc)
                             result = {"errcode": 1, "errmsg": f"邮箱降级登录异常: {fallback_exc}"}
@@ -162,6 +162,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         """选项配置入口。"""
         # 当前配置：优先 entry.options，其次 entry.data
         current = {**(self._entry.data or {}), **(self._entry.options or {})}
+        errors: dict[str, str] = {}
 
         if user_input is not None:
             # 合并新配置（空字符串表示不修改，保留原值）
@@ -183,28 +184,111 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 except (ValueError, TypeError):
                     pass
 
-            # 实时更新运行中的 data_client
-            data_client = self.hass.data.get(DOMAIN)
-            if data_client:
-                if "llm_api_key" in new_data:
-                    data_client.llm_api_key = new_data["llm_api_key"]
-                if "llm_base_url" in new_data:
-                    data_client.llm_base_url = new_data["llm_base_url"]
-                if "llm_model" in new_data:
-                    data_client.llm_model = new_data["llm_model"]
-                if "email_account" in new_data:
-                    data_client.email_account = new_data["email_account"]
-                if "refresh_interval" in new_data:
-                    data_client.refresh_interval = new_data["refresh_interval"]
-                # 重新配置 LLM 客户端
-                if data_client.llm_api_key:
-                    click_captcha_solver.configure_llm(
-                        data_client.llm_api_key,
-                        data_client.llm_base_url,
-                        data_client.llm_model,
-                    )
+            # ── 新密码：留空=不修改；填值=触发一次登录验证，成功后保存 ──
+            new_password_raw = user_input.get("new_password") or ""
+            new_password = new_password_raw.strip() if isinstance(new_password_raw, str) else ""
 
-            return self.async_create_entry(title="", data=new_data)
+            if new_password:
+                data_client = self.hass.data.get(DOMAIN)
+                if data_client is None:
+                    # 运行中没有 data_client，无法验证；提示并阻止保存
+                    errors["new_password"] = "no_account"
+                else:
+                    # 先把本次提交的 LLM/邮箱配置应用到 data_client
+                    # （验证码识别依赖 LLM；邮箱降级依赖 email_account）
+                    if "llm_api_key" in new_data:
+                        data_client.llm_api_key = new_data["llm_api_key"]
+                    if "llm_base_url" in new_data:
+                        data_client.llm_base_url = new_data["llm_base_url"]
+                    if "llm_model" in new_data:
+                        data_client.llm_model = new_data["llm_model"]
+                    if "email_account" in new_data:
+                        data_client.email_account = new_data["email_account"]
+                    if data_client.llm_api_key:
+                        click_captcha_solver.configure_llm(
+                            data_client.llm_api_key,
+                            data_client.llm_base_url,
+                            data_client.llm_model,
+                        )
+
+                    phone = data_client.account or ""
+                    email = data_client.email_account or ""
+                    if not phone:
+                        errors["new_password"] = "no_account"
+                    elif data_client.is_rk001_cooldown():
+                        # RK001 冷却期内禁止验证：避免把"限流"误判为"密码错误"
+                        errors["new_password"] = "rk001_cooldown_cannot_verify"
+                    else:
+                        result = None
+                        try:
+                            LOGGER.info(
+                                "[修改密码] 验证新密码，手机号=%s，备用邮箱=%s",
+                                phone, email or "未配置",
+                            )
+                            result = await data_client.password_login(
+                                phone, new_password, encode=False, retry=3
+                            )
+                            # 手机号遇 RK001 流控，且配置了邮箱，自动降级验证
+                            if result.get("errcode") != 0 and email and (
+                                result.get("rk001")
+                                or "RK001" in (result.get("errmsg") or "")
+                                or "流控" in (result.get("errmsg") or "")
+                            ):
+                                LOGGER.info("[修改密码] 手机号遇RK001流控，邮箱降级验证: %s", email)
+                                try:
+                                    result = await data_client.password_login(
+                                        email, new_password, encode=False, retry=2
+                                    )
+                                except Exception as fallback_exc:
+                                    LOGGER.exception("[修改密码] 邮箱降级验证异常: %s", fallback_exc)
+                                    result = {"errcode": 1, "errmsg": f"邮箱降级验证异常: {fallback_exc}"}
+                        except Exception as exc:
+                            LOGGER.error("[修改密码] 验证异常: %s", exc)
+                            errors["new_password"] = "cannot_connect"
+                            result = {"errcode": 1, "errmsg": str(exc)}
+
+                        if not errors:
+                            if result.get("errcode") == 0:
+                                # password_login 内部已把 MD5 化的新密码写入
+                                # data_client.password，并通过 __get_token→save_data()
+                                # 持久化到 state_grid.config Store 文件。
+                                # 下面的 reload 会从 Store 重新加载，新密码自动生效。
+                                LOGGER.info("[修改密码] 新密码验证成功，已写入 Store")
+                            else:
+                                errmsg = (
+                                    result.get("errmsg")
+                                    or result.get("message")
+                                    or "新密码验证失败"
+                                )
+                                LOGGER.warning("[修改密码] 新密码验证失败: %s", errmsg)
+                                if "RK001" in errmsg or "流控" in errmsg or "日额度" in errmsg:
+                                    errors["new_password"] = "rk001_rate_limit"
+                                else:
+                                    errors["new_password"] = "invalid_auth"
+
+            if not errors:
+                # 实时更新运行中的 data_client
+                data_client = self.hass.data.get(DOMAIN)
+                if data_client:
+                    if "llm_api_key" in new_data:
+                        data_client.llm_api_key = new_data["llm_api_key"]
+                    if "llm_base_url" in new_data:
+                        data_client.llm_base_url = new_data["llm_base_url"]
+                    if "llm_model" in new_data:
+                        data_client.llm_model = new_data["llm_model"]
+                    if "email_account" in new_data:
+                        data_client.email_account = new_data["email_account"]
+                    if "refresh_interval" in new_data:
+                        data_client.refresh_interval = new_data["refresh_interval"]
+                    # 重新配置 LLM 客户端
+                    if data_client.llm_api_key:
+                        click_captcha_solver.configure_llm(
+                            data_client.llm_api_key,
+                            data_client.llm_base_url,
+                            data_client.llm_model,
+                        )
+
+                return self.async_create_entry(title="", data=new_data)
 
         # 安全提取默认值（处理 None、非字符串等情况）
         def _str(key, fallback=""):
@@ -239,6 +323,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     default=_str("refresh_interval", "12"),
                     description="刷新间隔（小时，填 12-48 之间的整数）",
                 ): selector({"text": {"type": "text"}}),
+                vol.Optional(
+                    "new_password",
+                    default="",
+                    description="修改国家电网密码时填写（留空不修改）；填写后会触发一次登录验证",
+                ): selector({"text": {"type": "password"}}),
             }
         )
-        return self.async_show_form(step_id="init", data_schema=data_schema)
+        return self.async_show_form(step_id="init", data_schema=data_schema, errors=errors)
