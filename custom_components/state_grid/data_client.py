@@ -246,6 +246,9 @@ class StateGridDataClient:
         # ── 增强字段：RK001 冷却时间戳 ──
         _rk001_cooldown_until = 0.0
 
+        # ── 增强字段：登录失败冷却时间戳（防止 5 分钟内反复重登 → LLM 大量消耗） ──
+        _login_fail_cooldown_until = 0.0
+
         # ────────────────────────────────────────────
         # __init__: bilezhou 原版 + 增强字段加载
         # ────────────────────────────────────────────
@@ -261,6 +264,7 @@ class StateGridDataClient:
                                 A.llm_model=B.get('llm_model','doubao-seed-2-0-pro-260215')
                                 A.email_account=B.get('email_account','')
                                 A._rk001_cooldown_until=B.get('_rk001_cooldown_until',0.0)
+                                A._login_fail_cooldown_until=B.get('_login_fail_cooldown_until',0.0)
                                 # 加载 timestamp，使重启后 12 小时间隔判断仍然正确
                                 # 若旧版存储中没有该字段，则保留类默认值（当前时间）
                                 _saved_ts=B.get(_s)
@@ -279,6 +283,7 @@ class StateGridDataClient:
                 # 增强字段
                 A['llm_api_key']=B.llm_api_key;A['llm_base_url']=B.llm_base_url;A['llm_model']=B.llm_model
                 A['email_account']=B.email_account;A['_rk001_cooldown_until']=B._rk001_cooldown_until
+                A['_login_fail_cooldown_until']=B._login_fail_cooldown_until
                 # 保存 timestamp，使重启后 12 小时间隔判断仍然正确
                 A[_s]=B.timestamp
                 await async_save_to_store(B.hass,'state_grid.config',A)
@@ -347,7 +352,7 @@ class StateGridDataClient:
                 if 10015==A or 10108==A or 10009==A or 10207==A or 10005==A or 10010==A or 30010==A or 10002==A:B.need_login=_V;return _V
                 return _N
 
-        # __try_password_login: bilezhou 原版 + RK001冷却感知
+        # __try_password_login: bilezhou 原版 + RK001冷却感知 + 登录失败冷却（防 LLM 雪崩）
         async def __try_password_login(A):
                 # RK001 冷却期内，尝试邮箱降级
                 if A.is_rk001_cooldown():
@@ -359,9 +364,19 @@ class StateGridDataClient:
                                 LOGGER.warning("[RK001冷却] 跳过密码登录，未配置邮箱降级，等待明日0点")
                         return
 
-                # bilezhou 原版: 尝试密码登录
-                B=await A.password_login(A.account,A.password,_V,3)
-                if _G in B and B[_G]==0:A.need_login=_N;A.shown_notification=_N;await A.save_data();return
+                # 登录失败冷却期内，直接跳过（防止 5 分钟内反复调 LLM 解算验证码）
+                if A.is_login_fail_cooldown():
+                        LOGGER.debug("[登录失败冷却] 跳过本次密码登录重试，等待冷却结束")
+                        A.need_login=_V
+                        return
+
+                # bilezhou 原版: 尝试密码登录（retry 由 3 降至 1，单次最多消耗 2 次 LLM）
+                B=await A.password_login(A.account,A.password,_V,1)
+                if _G in B and B[_G]==0:
+                        # 登录成功：清除所有失败冷却
+                        A.need_login=_N;A.shown_notification=_N
+                        A._login_fail_cooldown_until=0.0
+                        await A.save_data();return
 
                 # 密码登录失败，如果是RK001则尝试邮箱降级
                 if A._is_rk001_error(B):
@@ -369,6 +384,14 @@ class StateGridDataClient:
                         login_ok = await A.__try_email_fallback_login()
                         if login_ok:return
                         A._set_rk001_cooldown()
+                        A.need_login=_V
+                        return
+
+                # 非 RK001 失败：设置 5 分钟登录失败冷却 + 显式标记 need_login
+                # 防止 refresh_data 内多个 __fetch_safe 串联反复触发重登 → LLM 大量消耗
+                LOGGER.warning("[登录失败] 密码登录未通过(errcode=%s)，进入 5 分钟冷却", B.get(_G))
+                A.need_login=_V
+                A._set_login_fail_cooldown(300)
 
         # ────────────────────────────────────────────
         # __fetch: bilezhou 原版（不变）
@@ -566,6 +589,24 @@ class StateGridDataClient:
                 LOGGER.warning(
                         "[RK001冷却] 密码登录日额度已用完，冷却至 %s（北京时间），期间不再尝试密码登录",
                         end_of_day.strftime('%Y-%m-%d %H:%M:%S'),
+                )
+
+        def is_login_fail_cooldown(self):
+                """检查当前是否处于登录失败冷却期（5 分钟内不再重试，避免反复调 LLM）"""
+                if self._login_fail_cooldown_until <= 0:
+                        return False
+                now = time.time()
+                if now >= self._login_fail_cooldown_until:
+                        self._login_fail_cooldown_until = 0.0
+                        return False
+                return True
+
+        def _set_login_fail_cooldown(self, seconds=300):
+                """设置登录失败冷却（默认 5 分钟），期间不再尝试密码登录，防止 LLM 反复消耗"""
+                self._login_fail_cooldown_until = time.time() + seconds
+                LOGGER.warning(
+                        "[登录失败冷却] 密码登录未通过，%d 秒内不再重试（避免反复调用 LLM 解算验证码）",
+                        seconds,
                 )
 
         # ────────────────────────────────────────────
