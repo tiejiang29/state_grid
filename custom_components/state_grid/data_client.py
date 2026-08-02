@@ -849,7 +849,13 @@ class StateGridDataClient:
                                         if _S in A:
                                                 for B in A[_S]:
                                                         if _AL not in B:await C.__get_door_mouth_bill(A,B)
-                                                        if _Au not in B:AA,F,D=get_month_date_range(B[_Z]);U=f"{D.year}-{D.month:02d}-{D.day:02d}";V=f"{F.year}-{F.month:02d}-{F.day:02d}";await C.__get_door_daily_bill(A,int(AA),V,U,B)
+                                                        if _Au not in B:
+                                                                AA,F,D=get_month_date_range(B[_Z])
+                                                                # 用独立局部变量，避免污染循环外 V/U
+                                                                # （否则下一个户号 __get_door_daily_bill 会拿到错误的日期范围）
+                                                                _ms=f"{F.year}-{F.month:02d}-{F.day:02d}"
+                                                                _me=f"{D.year}-{D.month:02d}-{D.day:02d}"
+                                                                await C.__get_door_daily_bill(A,int(AA),_ms,_me,B)
                                                         if B[_Z].startswith(str(Z.year)):w.append(B)
                                         A[J]=sorted(w,key=lambda x:x[_Z],reverse=_V)
                                 if S in A:A[T]=catchFloat(A[S],'totalEleNum');A[A1]=catchFloat(A[S],'totalEleCost')
