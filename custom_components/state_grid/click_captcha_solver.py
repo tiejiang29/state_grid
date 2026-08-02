@@ -58,8 +58,8 @@ def get_llm_client():
 
 
 def get_llm_model() -> str:
-    """获取当前配置的模型名称。"""
-    return _LLM_CONFIG.get("model", "doubao-seed-2-0-pro-260215")
+    """获取当前配置的模型名称（无默认值，必须由用户配置时填入）。"""
+    return _LLM_CONFIG.get("model", "")
 
 
 def base64_to_bytes(base64_data: str) -> bytes:

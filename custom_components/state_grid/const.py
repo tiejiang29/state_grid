@@ -1,6 +1,6 @@
 DOMAIN = "state_grid"
 PACKAGE_NAME = "custom_components.state_grid"
-VERSION = "0.7.12"
+VERSION = "0.7.13"
 VERSION_STORAGE = 21
 STORAGE_KEY = "state_grid.config"
 
@@ -13,4 +13,4 @@ FLOW_CONTROL_CODES = {11401}
 # LLM 验证码识别配置
 LLM_API_KEY = ""
 LLM_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
-LLM_MODEL = "doubao-seed-2-0-pro-260215"
+LLM_MODEL = ""

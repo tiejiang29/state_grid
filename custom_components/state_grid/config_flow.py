@@ -44,6 +44,8 @@ class StateGridOnnxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_email"
             elif not llm_api_key:
                 errors["base"] = "missing_llm_key"
+            elif not llm_model:
+                errors["base"] = "missing_llm_model"
 
             if not errors:
                 dc = StateGridDataClient(hass=self.hass, config=None)
@@ -125,7 +127,7 @@ class StateGridOnnxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional("llm_base_url", default=llm_base_url): selector(
                     {"text": {"type": "text"}}
                 ),
-                vol.Optional("llm_model", default=llm_model): selector(
+                vol.Required("llm_model", default=llm_model): selector(
                     {"text": {"type": "text"}}
                 ),
             }
@@ -183,6 +185,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     new_data["refresh_interval"] = max(12, min(48, hours))
                 except (ValueError, TypeError):
                     pass
+
+            # llm_model 强制必填：用户提交后不能为空
+            if "llm_model" in new_data and not new_data["llm_model"]:
+                errors["llm_model"] = "missing_llm_model"
+            elif "llm_model" not in new_data and not current.get("llm_model"):
+                errors["llm_model"] = "missing_llm_model"
 
             # ── 新密码：留空=不修改；填值=触发一次登录验证，成功后保存 ──
             new_password_raw = user_input.get("new_password") or ""
@@ -310,9 +318,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     "llm_base_url",
                     default=_str("llm_base_url", LLM_BASE_URL),
                 ): selector({"text": {"type": "text"}}),
-                vol.Optional(
+                vol.Required(
                     "llm_model",
-                    default=_str("llm_model", LLM_MODEL),
+                    default=_str("llm_model", ""),
+                    description="请输入大模型ID（如 doubao-seed-2-0-pro-260215）",
                 ): selector({"text": {"type": "text"}}),
                 vol.Optional(
                     "email_account",

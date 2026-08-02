@@ -10,7 +10,10 @@
           "password": "密码",
           "llm_api_key": "LLM API Key",
           "llm_base_url": "LLM Base URL",
-          "llm_model": "LLM 模型"
+          "llm_model": "LLM 模型 ID"
+        },
+        "data_description": {
+          "llm_model": "请输入大模型ID（如 doubao-seed-2-0-pro-260215），此项必填，用于验证码识别"
         }
       }
     },
@@ -18,6 +21,7 @@
       "invalid_auth": "账号或密码错误，或验证码识别失败",
       "cannot_connect": "无法连接到国家电网服务器",
       "missing_llm_key": "请配置 LLM API Key（用于验证码识别）",
+      "missing_llm_model": "请输入大模型ID（用于验证码识别）",
       "invalid_email": "请输入有效的邮箱地址",
       "invalid_phone": "请输入有效的手机号码",
       "rk001_rate_limit": "密码登录日额度已用完（RK001流控），请明日0点后重试"
@@ -34,10 +38,13 @@
         "data": {
           "llm_api_key": "LLM API Key（留空不修改）",
           "llm_base_url": "LLM Base URL",
-          "llm_model": "LLM 模型",
+          "llm_model": "LLM 模型 ID",
           "email_account": "备用邮箱（流控降级用）",
           "refresh_interval": "刷新间隔（小时，12-48）",
           "new_password": "新密码（留空不修改；填写后会触发一次登录验证）"
+        },
+        "data_description": {
+          "llm_model": "请输入大模型ID（如 doubao-seed-2-0-pro-260215），此项必填，用于验证码识别"
         }
       }
     },
@@ -45,6 +52,7 @@
       "invalid_auth": "新密码验证失败，请检查密码是否正确",
       "cannot_connect": "无法连接到国家电网服务器",
       "no_account": "未找到运行中的集成实例，请重试或重启 Home Assistant",
+      "missing_llm_model": "请输入大模型ID（用于验证码识别）",
       "rk001_cooldown_cannot_verify": "当前处于 RK001 流控冷却期，无法验证新密码，请明日0点后重试",
       "rk001_rate_limit": "密码登录日额度已用完（RK001流控），请明日0点后重试"
     }

@@ -238,7 +238,7 @@ class StateGridDataClient:
         # ── 增强字段：LLM 配置 ──
         llm_api_key = ""
         llm_base_url = "https://ark.cn-beijing.volces.com/api/v3"
-        llm_model = "doubao-seed-2-0-pro-260215"
+        llm_model = ""
 
         # ── 增强字段：备用邮箱（RK001降级用） ──
         email_account = ""
@@ -261,7 +261,7 @@ class StateGridDataClient:
                                 # 增强字段
                                 A.llm_api_key=B.get('llm_api_key','')
                                 A.llm_base_url=B.get('llm_base_url','https://ark.cn-beijing.volces.com/api/v3')
-                                A.llm_model=B.get('llm_model','doubao-seed-2-0-pro-260215')
+                                A.llm_model=B.get('llm_model','')
                                 A.email_account=B.get('email_account','')
                                 A._rk001_cooldown_until=B.get('_rk001_cooldown_until',0.0)
                                 A._login_fail_cooldown_until=B.get('_login_fail_cooldown_until',0.0)
