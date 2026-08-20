@@ -819,7 +819,9 @@ class StateGridDataClient:
                                         if A8:A[I]=W
                                         if X and not j:A[I]=-abs(W)
                                         if X and j:A[I]=W
-                                        if g!=0:A[I]=g
+                                        # accountBalance 字段存在就用它的真实值（即使为 0）
+                                        # 修复：余额为 0 时不能被前面 sumMoney 兜底覆盖
+                                        if 'accountBalance' in A[_Y]:A[I]=g
                                 else:LOGGER.error('国家电网账户余额获取失败！')
                                 if I not in A:A[I]=0
                                 await C.__get_door_daily_bill(A,H.year,V,U)
