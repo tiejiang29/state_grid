@@ -25,8 +25,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # 配置优先级：entry.options > entry.data > 存储中的 config
     # entry.options 是用户在"配置"按钮中修改的最新值
     merged = {**(entry.data or {}), **(entry.options or {})}
-    # LLM 三项与备用邮箱已经从本集成移除（网页登录链整段删了）；旧 entry.data 里
-    # 残留的那些键会被直接忽略，不读也不回写
+    # LLM 三项已经从本集成移除（网页验证码那套不发了）；旧 entry.data 里
+    # 残留的那些键会被直接忽略，不读也不回写。备用邮箱重新回来了，但它只做一件事：
+    # 网页登录被硬拒（RK001）时换一把标识，见 web_api.WebChannel
+    data_client.email_account = str(merged.get("email_account") or "")
+    data_client.web_channel = bool(merged.get("web_channel", True))
+    # 网页通道开关：默认开。它是"缓存没命中才走网络"的补齐路径，不影响 App 供数节奏。
+    data_client.web_channel = bool(merged.get("web_channel", True))
+    LOGGER.warning("供数通道：App 优先 + 网页补齐=%s（网页只在推送缓存没命中时发请求；备用标识%s）",
+                   "开" if data_client.web_channel else "关",
+                   "已配" if data_client.email_account else "未配")
     if "refresh_interval" in merged:
         try:
             data_client.refresh_interval = max(12, int(merged["refresh_interval"]))

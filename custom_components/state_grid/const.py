@@ -1,6 +1,6 @@
 DOMAIN = "state_grid"
 PACKAGE_NAME = "custom_components.state_grid"
-VERSION = "0.9.5"   # 和 manifest.json 的 version 保持一致：store 里的 dataVersion 读的是这一份
+VERSION = "0.9.6"   # 和 manifest.json 的 version 保持一致：store 里的 dataVersion 读的是这一份
 VERSION_STORAGE = 21
 STORAGE_KEY = "state_grid.config"
 

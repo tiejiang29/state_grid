@@ -1,13 +1,16 @@
 """
-国家电网数据客户端。
+国家电网数据客户端：取数与解析。
 
-数据只从"推送缓存"来，本模块不再发任何网络请求：
-  * state_grid 自己的 App 通道（app_supply 按刷新间隔把 App 接口面的返回翻译成网页形状灌进来）；
-  * sidecar 浏览器容器 POST 给本集成 webhook 的那份真实网页响应（仓库 state_grid_docker）。
+两个供数来源，顺序是"先缓存、后网络"：
+  * App 通道（`app_supply` 按刷新间隔把 App 接口面的返回翻译成网页形状灌进
+    `push_cache`）——命中即用，一天两轮，正常情况都走这条；
+  * 网页通道（`web_api.WebChannel`）——只在某个格子缓存没货时才发真请求，
+    所以它补的是 App 给不了的那部分（例如 4006 短信没登进来、某块表缺月行）。
+    关掉 `web_channel` 选项或它挂不上时，行为和以前一样：返回 no_cache 按缺数处理。
 
-为什么不留网页 HTTP：95598 在 2026-09 把会话密钥挪进了页面——服务端用客户端公钥加密每一个
-响应，私钥只存在于浏览器里，离线客户端既解不开响应也没法重放抓下来的 header/cookie。
-所以网页那半边的取数只能在真浏览器里做，做完把结果推进来。
+网页这条能纯 HTTP 走通的前提写在 `web_api.py` 顶部：登录体只发 `params`（旧版多带的
+loginKey/code/Channels 会让服务端硬拒），并且首发拿到 RK1003 之后再补一次
+`complexSliderRet` —— 2026-10 验证：服务端不回头向腾讯核对，所以不需要浏览器。
 
 取数与解析逻辑仍沿用 bilezhou/state_grid 原版（MIT），下面那套 refresh_data 一行语义没改。
 """
@@ -16,6 +19,7 @@ import json
 import time
 import datetime
 
+from . import web_api
 from .const import VERSION
 from .utils.logger import LOGGER
 from .utils.store import async_save_to_store
@@ -265,6 +269,13 @@ class StateGridDataClient:
         # 还直接下标读它们。载荷现在只当缓存键用（匹配看户号/期间/日期区间），所以留占位：
         # 不给就会在第一次取数时 AttributeError 把整轮炸掉——23:25 在 NAS 上实测到
         userInfo=_D;token=_D
+        # 网页通道三态：None=还没试过；False=试过但不可用（别在每个空格子上都去登录一次）；
+        # 其余是可用实例
+        web=_D
+        web_channel=_N
+        # 网页登录的备用标识（登记邮箱）：主标识吃到 RK001 时由 web_api 顶上。
+        # 住在条目选项里，不落 state_grid.config（那份只放取数要用的凭证）
+        email_account=""
 
         # ── 推送缓存：App 通道与 sidecar 都往这里灌 {(api, 户号): [(响应, 期间, 覆盖起, 覆盖止), …]} ──
         push_cache = {}
@@ -392,11 +403,19 @@ class StateGridDataClient:
                                        '覆盖不足' if Q0 else '无此键',
                                        sorted('%s|%s' % ('/'.join(k[0].split('/')[-2:]), k[1])
                                               for k in A.push_cache))
-                # 不命中也不自己去登录：网页那条路的会话密钥在浏览器页面里（服务端用客户端
-                # 公钥加密每个响应），离线客户端解不开，2026-09 起就这样。要那份数据
-                # 只能由 sidecar 容器抓了推进来（仓库 state_grid_docker）。
-                # 这里不能碰 A.timestamp —— 它代表"数据新鲜度"， miss 也算新鲜的话 12 小时闸门就废了
-                return {'code':'no_cache','message':'推送缓存里没有这格的载荷（本轮不走网络）'}
+                # 缓存没货时才可以走网络，而且只在挂上了网页通道时走（`web_channel` 选项）。
+                # 载荷是上面那些方法原样建的、响应也是原样的网页形状，所以解析层不用第二套
+                # 语义；App 通道供得上的格子在上面就 return 了，压根到不了这里。
+                # 挂不上（选项关了、缺凭据、登录失败）就维持原行为返回 no_cache，按缺数处理。
+                # 这里不能碰 A.timestamp —— 它代表"数据新鲜度"，miss 也算新鲜的话 12 小时闸门就废了
+                if A.web is _D:A.web=await web_api.async_attach(A) or _V
+                if A.web is not _D and A.web is not _V:
+                        A.userInfo=A.web.user_info or A.userInfo;A.token=A.web.token
+                        W0=await A.web.async_call(api,data)
+                        if W0:
+                                LOGGER.warning('网页通道取到 %s',api.split("/member/")[-1])
+                                return W0
+                return {'code':'no_cache','message':'推送缓存里没有这格的载荷，网页通道本轮也没挂上'}
 
         async def __get_door_number(A):
                 B=configuration[_Ac];G={_C:B[_C],_E:B[_E],_T:B[_T],_Q:{_l:B[_Q][_l],_m:B[_Q][_m],_n:B[_Q][_n],_o:B[_Q][_o]},_AX:{_W:A.userInfo[_W]},_AA:A.token};C=await A.__fetch_safe(get_door_number_api,G);H=A.handle_request_result_message('get_door_number_api',C)

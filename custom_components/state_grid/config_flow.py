@@ -1,7 +1,8 @@
-"""国家电网集成的配置向导：只走 App 通道。
+"""国家电网集成的配置向导：添加与改密码都走 App 通道。
 
-网页那条登录链（验证码、邮箱降级、会话密钥）已经整段删掉——95598 升级后每个响应都用
-浏览器里的客户端公钥加密，离线客户端解不开。本集成因此不发任何网页请求。
+取数以 App 通道为主；网页那条纯 HTTP 通道（`web_api.py`）只在某个格子缓存没货时才发请求，
+它不需要验证码，也不发浏览器。这一路的备用登录标识（邮箱）就在选项里填：手机号那把
+被硬拒（RK001）时网页登录自动改用邮箱，两把都被拒才等明天。
 
 服务端把这台合成设备当成"新设备"时会要求一次短信验证（`resultCode=4006`）：那时多发一个
 请求让国网把验证码发到手机号，拿回短时效的 codeKey，配置向导多出一页填 6 位数字，再把
@@ -20,10 +21,11 @@ from .data_client import StateGridDataClient
 from .utils.logger import LOGGER
 
 USER_HINT = (
-    "登录与取数都走国家电网 App 的接口：没有验证码，也不需要大模型或浏览器。"
+    "登录与取数主要走国家电网 App 的接口：没有验证码，也不需要大模型或浏览器。"
     "配好之后按刷新间隔取数，默认 12 小时一次（一天两次）。\n\n"
-    "只有「上个月抄表」这一格取不到：站点升级后网页那侧的载荷里就没有解析器等的那组键，"
-    "App 侧也没有对应端点，其余实体都来自 App 接口。"
+    "App 没供上的那几格（实测是月账单里的一整年，以及逐月抄表读数）由网页那条纯 HTTP 通道"
+    "补齐，不用你动手；网页被硬拒时会自动改用备用标识，两把都不行就等第二天。\n\n"
+    "「上个月抄表」这一格站点给回的就是 0，所以它会显示 0；其余实体都有值。"
 )
 
 SMS_HINT = (
@@ -187,6 +189,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         errors: dict[str, str] = {}
         new_data: dict[str, object] = {}
         interval = str(current.get("refresh_interval", 12))
+        web_on = bool(current.get("web_channel", True))
+        email = str(current.get("email_account") or "")
 
         if user_input is not None:
             raw_interval = user_input.get("refresh_interval")
@@ -196,6 +200,17 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     new_data["refresh_interval"] = max(12, min(48, int(str(raw_interval).strip())))
                 except (ValueError, TypeError):
                     errors["refresh_interval"] = "invalid_interval"
+
+            # 这两项要在改密码那一段**之前**收：那条路成功时会带着 new_data 直接 return，
+            # 放它后面就等于"改了密码顺手把开关和备用标识丢掉"
+            if "web_channel" in user_input:
+                new_data["web_channel"] = bool(user_input.get("web_channel"))
+            if "email_account" in user_input:
+                new_email = str(user_input.get("email_account") or "").strip()
+                if new_email and "@" not in new_email:
+                    errors["email_account"] = "invalid_email"
+                else:
+                    new_data["email_account"] = new_email
 
             new_password = str(user_input.get("new_password") or "").strip()
             if new_password and not errors:
@@ -220,6 +235,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     dc = self.hass.data.get(DOMAIN)
                     if dc is not None and "refresh_interval" in new_data:
                         dc.refresh_interval = new_data["refresh_interval"]
+                    if dc is not None and "web_channel" in new_data:
+                        # 关掉时把已挂的会话一起摘掉，别让 __fetch 继续用旧实例发请求
+                        dc.web_channel = new_data["web_channel"]
+                        if not new_data["web_channel"]:
+                            dc.web = None
+                    if dc is not None and "email_account" in new_data:
+                        # 换了备用标识就得重挂一次：实例里记的还是旧的那把
+                        dc.email_account = new_data["email_account"]
+                        dc.web = None
                     return self.async_create_entry(title="", data=new_data)
                 return self.async_create_entry(title="", data={})
 
@@ -230,6 +254,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Optional(
                         "refresh_interval", default=interval,
                         description="刷新间隔（小时，填 12-48 之间的整数）",
+                    ): selector({"text": {"type": "text"}}),
+                    vol.Optional(
+                        "web_channel", default=web_on,
+                        description="网页通道补齐（App 没供上的格子才走网页；关掉则只吃 App 与推送）",
+                    ): selector({"boolean": {}}),
+                    vol.Optional(
+                        "email_account", default=email,
+                        description="备用登录标识（选填，一般填登记在国网的邮箱）：手机号那把被硬拒时，"
+                                    "网页登录改用这一把，不用你动手",
                     ): selector({"text": {"type": "text"}}),
                     vol.Optional(
                         "new_password", default="",

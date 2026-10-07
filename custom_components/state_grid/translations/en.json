@@ -42,7 +42,9 @@
         "description": "Change the refresh interval, or update the password after changing it on State Grid (empty keeps the current one). A new password is verified through the App channel before it is saved.",
         "data": {
           "refresh_interval": "Refresh interval (hours, 12-48)",
-          "new_password": "New password (empty keeps current)"
+          "new_password": "New password (empty keeps current)",
+          "web_channel": "Web channel fallback",
+          "email_account": "Alternate sign-in id (email, optional)"
         }
       },
       "device_verification": {
@@ -62,7 +64,8 @@
       "no_account": "No running integration instance found. Try again or restart Home Assistant",
       "new_device_required": "State Grid wants a one-time \"new device\" check, but the SMS could not be sent. Go back one step and submit your password again; if this keeps happening this phone number is being blocked and the integration cannot finish that step",
       "invalid_verification_code": "The code is wrong or has expired. Go back one step and resubmit your password so State Grid sends a new SMS",
-      "captcha_required": "State Grid asked for a security check at this step (a slider or click captcha; the type code is RKxxx). That check has to be completed by Tencent's web widget, which the App interface cannot do here, so retrying won't make it go away. This is not a wrong password and not your network - the \"network timeout\" wording is the site's generic text for these codes"
+      "captcha_required": "State Grid asked for a security check at this step (a slider or click captcha; the type code is RKxxx). That check has to be completed by Tencent's web widget, which the App interface cannot do here, so retrying won't make it go away. This is not a wrong password and not your network - the \"network timeout\" wording is the site's generic text for these codes",
+      "invalid_email": "That doesn't look like an email address; leave it empty to disable the alternate id"
     }
   }
 }
