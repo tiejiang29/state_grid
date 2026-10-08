@@ -273,6 +273,10 @@ class StateGridDataClient:
         # 其余是可用实例
         web=_D
         web_channel=_N
+        # 网页优先（选项里可关）：真=每格先问网页、App 灌进来的载荷兜底；
+        # 假=老顺序（缓存命中优先，网页只补没货的格子）。
+        # 两侧字段与数值 10-05 逐项对过，换顺序不改口径，只改"今天这格是谁答的"。
+        web_priority=_V
         # 网页登录的备用标识（登记邮箱）：主标识吃到 RK001 时由 web_api 顶上。
         # 住在条目选项里，不落 state_grid.config（那份只放取数要用的凭证）
         email_account=""
@@ -387,9 +391,30 @@ class StateGridDataClient:
                         LOGGER.warning('取数异常(%s)：%s %s',api,type(exc).__name__,str(exc)[:120])
                         return {'code':'fetch_error','message':str(exc)[:120]}
 
+        async def __fetch_web(A,api,data):
+                """问一次网页。挂不上/供不上都回 _D（调用方按缺数处理），别在这里编造成功。"""
+                # _D=还没试过；_V=试过但没挂上——两种都可以再试，但 async_attach 自己带闸门
+                # （连致失败越多隔得越久），所以每格都走到这里也不会变成逐格敲登录。
+                if A.web is _D or A.web is _V:A.web=await web_api.async_attach(A) or _V
+                if A.web is _D or A.web is _V:return _D
+                if A.web.unavailable():return _D   # 本轮已锁/当天已冷却：零请求直接回缓存
+                A.userInfo=A.web.user_info or A.userInfo;A.token=A.web.token
+                W0=await A.web.async_call(api,data)
+                if W0:
+                        LOGGER.warning('网页通道取到 %s',api.split("/member/")[-1])
+                        return W0
+                return _D
+
         async def __fetch(A,api,data,header=_D):
+                # 供数顺序由 `web_priority` 定：真=每格先问网页、App 灌进来的载荷兜底；
+                # 假=原来的顺序（缓存命中优先，网页只补没货的格子）。
+                # 两条路的载荷与响应形状同一套（解析层不分叉），换顺序不改数值口径。
+                if A.web_channel and A.web_priority:
+                        W0=await A.__fetch_web(api,data)
+                        if W0 is not _D:return W0
                 # 推送缓存的载荷命中即用、一次一份：同一 (接口, 户号) 可以挂多份，
                 # 由 _push_covers 按期间和覆盖区间挑。
+                # 网页优先时没被消费的 App 载荷不会堆着：ingest_push 是整包替换，下一轮就换新
                 if A.push_cache:
                         K0=_push_hit_key(api,data)
                         Q0=A.push_cache.get(K0) or []
@@ -403,19 +428,13 @@ class StateGridDataClient:
                                        '覆盖不足' if Q0 else '无此键',
                                        sorted('%s|%s' % ('/'.join(k[0].split('/')[-2:]), k[1])
                                               for k in A.push_cache))
-                # 缓存没货时才可以走网络，而且只在挂上了网页通道时走（`web_channel` 选项）。
-                # 载荷是上面那些方法原样建的、响应也是原样的网页形状，所以解析层不用第二套
-                # 语义；App 通道供得上的格子在上面就 return 了，压根到不了这里。
-                # 挂不上（选项关了、缺凭据、登录失败）就维持原行为返回 no_cache，按缺数处理。
+                # App 优先那一路：缓存没货时才可以走网络（载荷是上面那些方法原样建的，
+                # 响应也是原样的网页形状，所以解析层不用第二套语义）
+                if A.web_channel and not A.web_priority:
+                        W0=await A.__fetch_web(api,data)
+                        if W0 is not _D:return W0
                 # 这里不能碰 A.timestamp —— 它代表"数据新鲜度"，miss 也算新鲜的话 12 小时闸门就废了
-                if A.web is _D:A.web=await web_api.async_attach(A) or _V
-                if A.web is not _D and A.web is not _V:
-                        A.userInfo=A.web.user_info or A.userInfo;A.token=A.web.token
-                        W0=await A.web.async_call(api,data)
-                        if W0:
-                                LOGGER.warning('网页通道取到 %s',api.split("/member/")[-1])
-                                return W0
-                return {'code':'no_cache','message':'推送缓存里没有这格的载荷，网页通道本轮也没挂上'}
+                return {'code':'no_cache','message':'这一格网页没供上、缓存里也没有载荷'}
 
         async def __get_door_number(A):
                 B=configuration[_Ac];G={_C:B[_C],_E:B[_E],_T:B[_T],_Q:{_l:B[_Q][_l],_m:B[_Q][_m],_n:B[_Q][_n],_o:B[_Q][_o]},_AX:{_W:A.userInfo[_W]},_AA:A.token};C=await A.__fetch_safe(get_door_number_api,G);H=A.handle_request_result_message('get_door_number_api',C)

@@ -43,8 +43,9 @@
         "data": {
           "refresh_interval": "Refresh interval (hours, 12-48)",
           "new_password": "New password (empty keeps current)",
-          "web_channel": "Web channel fallback",
-          "email_account": "Alternate sign-in id (email, optional)"
+          "web_channel": "Web channel",
+          "email_account": "Alternate sign-in id (email, optional)",
+          "web_priority": "Prefer the web channel"
         }
       },
       "device_verification": {

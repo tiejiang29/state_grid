@@ -21,10 +21,10 @@ from .data_client import StateGridDataClient
 from .utils.logger import LOGGER
 
 USER_HINT = (
-    "登录与取数主要走国家电网 App 的接口：没有验证码，也不需要大模型或浏览器。"
-    "配好之后按刷新间隔取数，默认 12 小时一次（一天两次）。\n\n"
-    "App 没供上的那几格（实测是月账单里的一整年，以及逐月抄表读数）由网页那条纯 HTTP 通道"
-    "补齐，不用你动手；网页被硬拒时会自动改用备用标识，两把都不行就等第二天。\n\n"
+    "取数默认由网页那条纯 HTTP 通道主讲（不开浏览器、不过验证码），App 接口灌进来的那份兜底；"
+    "两个选项都能在「配置」里改回 App 优先。\n\n"
+    "添加与改密码都走 App 通道：配好之后按刷新间隔取数，默认 12 小时一次（一天两次）。"
+    "网页被硬拒（RK001）时会自动改用备用标识，两把都不行就等第二天，不需要你动手。\n\n"
     "「上个月抄表」这一格站点给回的就是 0，所以它会显示 0；其余实体都有值。"
 )
 
@@ -190,6 +190,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         new_data: dict[str, object] = {}
         interval = str(current.get("refresh_interval", 12))
         web_on = bool(current.get("web_channel", True))
+        prio_on = bool(current.get("web_priority", True))
         email = str(current.get("email_account") or "")
 
         if user_input is not None:
@@ -201,10 +202,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 except (ValueError, TypeError):
                     errors["refresh_interval"] = "invalid_interval"
 
-            # 这两项要在改密码那一段**之前**收：那条路成功时会带着 new_data 直接 return，
+            # 这几项要在改密码那一段**之前**收：那条路成功时会带着 new_data 直接 return，
             # 放它后面就等于"改了密码顺手把开关和备用标识丢掉"
             if "web_channel" in user_input:
                 new_data["web_channel"] = bool(user_input.get("web_channel"))
+            if "web_priority" in user_input:
+                new_data["web_priority"] = bool(user_input.get("web_priority"))
             if "email_account" in user_input:
                 new_email = str(user_input.get("email_account") or "").strip()
                 if new_email and "@" not in new_email:
@@ -240,6 +243,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         dc.web_channel = new_data["web_channel"]
                         if not new_data["web_channel"]:
                             dc.web = None
+                    if dc is not None and "web_priority" in new_data:
+                        dc.web_priority = new_data["web_priority"]
                     if dc is not None and "email_account" in new_data:
                         # 换了备用标识就得重挂一次：实例里记的还是旧的那把
                         dc.email_account = new_data["email_account"]
@@ -257,7 +262,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     ): selector({"text": {"type": "text"}}),
                     vol.Optional(
                         "web_channel", default=web_on,
-                        description="网页通道补齐（App 没供上的格子才走网页；关掉则只吃 App 与推送）",
+                        description="网页通道（关掉则完全不发网页请求，只吃 App 与推送）",
+                    ): selector({"boolean": {}}),
+                    vol.Optional(
+                        "web_priority", default=prio_on,
+                        description="网页优先取数（每格先问网页，App 灌进来的那份兜底）；"
+                                    "关掉则回到 App 优先、网页只补没货的格子",
                     ): selector({"boolean": {}}),
                     vol.Optional(
                         "email_account", default=email,

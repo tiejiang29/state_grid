@@ -43,8 +43,9 @@
         "data": {
           "refresh_interval": "刷新间隔（小时，12-48）",
           "new_password": "新密码（留空不修改）",
-          "web_channel": "网页通道补齐",
-          "email_account": "备用登录标识（邮箱，选填）"
+          "web_channel": "网页通道",
+          "email_account": "备用登录标识（邮箱，选填）",
+          "web_priority": "网页优先取数"
         }
       },
       "device_verification": {

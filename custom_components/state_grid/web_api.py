@@ -48,6 +48,11 @@ BEARER_LIFE_SAFETY_S = 300
 # 登录令牌按服务端给的时间算，兜底当 15 天
 TOKEN_FALLBACK_S = 15 * 86400
 
+# 挂接（=登录）的重试闸门状态：进程内共享。一轮失败后 timestamp 会被回滚、协调器每 5 分钟
+# 再跑整轮，所以"隔多久再试一次挂"必须记在这里，而不是每个 WebChannel 上。
+_attach_next = 0.0
+_attach_streak = 0
+
 # 只有这几个业务接口带 Authorization / t（照旧版的清单）
 AUTH_APIS = ("/osg-open-uc0001/member/c9/f02", "/osg-open-bc0001/member/c05/f01",
              "/osg-open-bc0001/member/c01/f02", "/osg-open-bc0001/member/c04/f03",
@@ -482,11 +487,14 @@ def _classify(code: str, srvrt: dict[str, Any], plain: dict[str, Any]) -> str:
 async def async_attach(client) -> "WebChannel | None":
     """给 data_client 惰性挂一个网页会话：能挂上返回通道，挂不上返回 None。
 
-    只在"推送缓存没命中、本轮真的要发网络"那一刻被调用一次，所以 App 通道供得上的日子
-    这里一次 f06 都不会发。返回 None 也照样写回 `client.web`，用来记住"这轮试过了"，
-    免得同一轮里每个空格子都去登录一次。
+    这一层自带**重试闸门**（连致失败越多、隔得越久，最长 12 小时）：一轮失败后 store 的
+    timestamp 会被回滚，协调器每 5 分钟就会再跑整轮，没有闸门的话这里每天要敲上百次登录。
+    返回 None 也照样写回 `client.web`，用来记住"这轮试过了"。
     """
+    global _attach_next, _attach_streak
     if not getattr(client, "web_channel", False):
+        return None
+    if time.time() < _attach_next:
         return None
     account = str(getattr(client, "account", "") or "")
     digest = str(getattr(client, "password", "") or "")
@@ -494,6 +502,7 @@ async def async_attach(client) -> "WebChannel | None":
         LOGGER.warning("网页通道没挂上：缺账号或密码摘要（store 里的摘要长度 %d）", len(digest))
         return None
     alt = str(getattr(client, "email_account", "") or "").strip()
+    _attach_next = time.time() + 300          # 这次是真去试了：先占住闸门再发请求
     from homeassistant.helpers.aiohttp_client import async_get_clientsession
     from homeassistant.helpers.storage import Store
     web = WebChannel(client.hass, async_get_clientsession(client.hass), account, digest,
@@ -501,8 +510,13 @@ async def async_attach(client) -> "WebChannel | None":
     if not alt:
         LOGGER.warning("网页通道没配备用标识：一旦被硬拒（RK001）就只能等明天")
     if not await web.async_login():
-        LOGGER.warning("网页通道本轮不可用（%s），这轮继续只吃缓存", web.last_error)
+        _attach_streak += 1
+        hold = min(RETRY_LOCK_S << (_attach_streak - 1), RETRY_LOCK_MAX_S)
+        _attach_next = time.time() + hold
+        LOGGER.warning("网页通道本轮不可用（%s），%d 分钟内不再尝试挂它", web.last_error, hold // 60)
         return None
+    _attach_streak = 0
+    _attach_next = 0.0
     LOGGER.warning("网页通道已挂上：户号信息 %d 项、bearer %d 字符",
                    len(web.user_info), len(web.access_token))
     return web

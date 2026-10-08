@@ -30,9 +30,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # 网页登录被硬拒（RK001）时换一把标识，见 web_api.WebChannel
     data_client.email_account = str(merged.get("email_account") or "")
     data_client.web_channel = bool(merged.get("web_channel", True))
-    # 网页通道开关：默认开。它是"缓存没命中才走网络"的补齐路径，不影响 App 供数节奏。
-    data_client.web_channel = bool(merged.get("web_channel", True))
-    LOGGER.warning("供数通道：App 优先 + 网页补齐=%s（网页只在推送缓存没命中时发请求；备用标识%s）",
+    # 供数顺序：默认网页优先（App 灌进来的那份载荷兜底）；关掉就回到老顺序
+    # （App 命中优先，网页只补缓存没货的格子）。
+    data_client.web_priority = bool(merged.get("web_priority", True))
+    LOGGER.warning("供数顺序：%s（另一条兜底）；网页通道=%s；备用标识%s",
+                   "网页优先" if data_client.web_priority else "App 优先",
                    "开" if data_client.web_channel else "关",
                    "已配" if data_client.email_account else "未配")
     if "refresh_interval" in merged:
