@@ -59,6 +59,12 @@ JSON_TYPE = "application/json;charset=UTF-8"
 GAP_MIN_S = 0.3
 GAP_MAX_S = 0.5
 
+# 登录/续期一失败就把网页通道锁住这么久，并且**每失败一次翻倍**（上限 12 小时）。
+# 需要翻倍是因为一轮失败之后 store 的 timestamp 会被回滚，协调器每 5 分钟就再试一次整轮：
+# 10-08 实测那样 90 分钟里打了 64 发 authorize，全是用一把死令牌在撞。
+RETRY_LOCK_S = 1800
+RETRY_LOCK_MAX_S = 12 * 3600
+
 
 def _end_of_day_ts() -> float:
     """当天 23:59:59（北京时间）的 unix 秒。RK001 是按天翻脸的，冷却就按天平。"""
@@ -121,6 +127,9 @@ class WebChannel:
         self.alt_account = alt_account
         # 两把标识都吃到 RK001 之后填上"当天结束"，期间一发登录都不再发
         self.cooldown_until = 0.0
+        # 登录/续期失败后的短锁（只在本进程内，见 RETRY_LOCK_S）
+        self.locked_until = 0.0
+        self.fail_streak = 0
         # 集成里存的是 32 位 MD5 摘要（App 通道也用同一份），f06 要的就是它的大写形式。
         # 别再 hash 一遍——那等于拿摘要当密码去登录，服务端只会回密码错误。
         self.password_digest = password_digest
@@ -276,12 +285,16 @@ class WebChannel:
                 "client_id": APP_KEY, "timestamp": str(ts)}
         headers = {"Accept": JSON_TYPE, "Content-Type": JSON_TYPE, "version": "1.0",
                    "source": "0901", "timestamp": str(ts), "wsgwType": "web", "appKey": APP_KEY}
-        biz = _payload(_decrypt(await self._raw(BASE_API + KEY_API, body, headers), local_key))
+        plain = await self._raw(BASE_API + KEY_API, body, headers)
+        biz = _payload(_decrypt(plain, local_key))
         self.key_code = str(biz.get("keyCode") or "")
         self.public_key = str(biz.get("publicKey") or SERVER_PUBLIC_KEY)
         if not self.key_code:
-            self.last_error = "unknown"
-            LOGGER.warning("网页通道握手没拿到会话密钥（载荷键=%s）", sorted(biz)[:6])
+            # 按回包本身分类，别一律写成 unknown：连不上（空回包）和被网关拒绝是两回事，
+            # 后者换标识也没用，而日志与本轮要不要重登都按这个键判
+            self.last_error = _classify(str(plain.get("code") or ""), _srvrt(plain), plain)
+            LOGGER.warning("网页通道握手没拿到会话密钥（%s，载荷键=%s）",
+                           self.last_error, sorted(biz)[:6])
             return False
         return True
 
@@ -342,8 +355,8 @@ class WebChannel:
                 if await self.async_ensure_bearer():
                     return True
                 # 落盘的登录令牌续不动 bearer（NAS 10:31 实测 `20103 请求异常【O10011】`）：
-                # 不重登就等于整轮没有网页通道。这里只补一次登录，`async_call` 里那条
-                # "bearer 换不动不许顺手重登"的护栏照旧留着，同一轮不会滚成两次登录。
+                # 不重登就等于整轮没有网页通道。这里补一次登录，救不动就交给
+                # async_call 那道锁（本轮内不再逐格去撞一把死令牌）
                 LOGGER.warning("网页通道续 bearer 失败，本轮改用新会话重登一次")
             ids = self._identifiers()
             for acct in ids:
@@ -405,14 +418,41 @@ class WebChannel:
         return True
 
     # ---------- 业务请求 ----------
+    def _locked(self) -> bool:
+        return time.time() < self.locked_until
+
+    def unavailable(self) -> bool:
+        """这一轮别再问网页了：要么当天已被硬拒（冷却），要么刚失败过进了短锁。"""
+        return self._in_cooldown() or self._locked()
+
+    def _set_lock(self) -> None:
+        self.fail_streak += 1
+        hold = min(RETRY_LOCK_S << (self.fail_streak - 1), RETRY_LOCK_MAX_S)
+        self.locked_until = time.time() + hold
+        LOGGER.warning("网页通道锁住 %d 分钟不再发请求（连续第 %d 次失败，最近一次=%s）",
+                       hold // 60, self.fail_streak, self.last_error or "unknown")
+
     async def async_call(self, api: str, payload: Any) -> dict[str, Any]:
         """取一个业务接口；会话过期就重登一次再试，仍然失败只回空 dict（调用方按缺数处理）。"""
-        if not await self.async_ensure_bearer():
-            # bearer 换不动就不要顺手重登：那会再吃两发 f06，而限频是按账号算的
+        if self._locked():
+            LOGGER.warning("网页通道处于本轮锁内，%s 直接按缺数处理", api.split("/member/")[-1])
             return {}
+        if not await self.async_ensure_bearer():
+            # 进程长跑时 bearer 只有 25 分钟命，而取数按 12 小时走：这一发要是换不动，
+            # 必须当场重登一次把它救活（10-08 就是没这一步，一轮白打 20 多发 authorize）。
+            # 重登失败（含两把标识都被拒、连不上）就锁到下一轮，不再逐格去撞。
+            if not await self.async_login(force=True):
+                self._set_lock()
+                return {}
         plain = await self._post(api, payload)
-        if _session_dead(plain) and await self.async_login(force=True):
-            plain = await self._post(api, payload)
+        if _session_dead(plain):
+            if await self.async_login(force=True):
+                plain = await self._post(api, payload)
+            else:
+                self._set_lock()
+        elif plain:
+            # 拿到回包就把连败计数清掉：锁的时长应该跟着"最近是不是一直在失败"走
+            self.fail_streak = 0
         return plain
 
 
