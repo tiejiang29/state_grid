@@ -1,7 +1,7 @@
 {
   "domain": "state_grid",
   "name": "国家电网",
-  "version": "0.9.8",
+  "version": "0.9.9",
   "documentation": "https://github.com/tiejiang29/state_grid",
   "requirements": [],
   "codeowners": ["tiejiang29"],

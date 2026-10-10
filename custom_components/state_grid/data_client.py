@@ -271,6 +271,9 @@ class StateGridDataClient:
         userInfo=_D;token=_D
         # 网页通道三态：None=还没试过；False=试过但不可用（别在每个空格子上都去登录一次）；
         # 其余是可用实例
+        # 本轮真的供上了几格：refresh_data 结尾靠它决定要不要把 timestamp 前移
+        # （网页优先之后，一轮可以完全不碰推送缓存，而推 timestamp 的只有 ingest_push）
+        fetch_ok=0
         web=_D
         web_channel=_N
         # 网页优先（选项里可关）：真=每格先问网页、App 灌进来的载荷兜底；
@@ -402,6 +405,7 @@ class StateGridDataClient:
                 W0=await A.web.async_call(api,data)
                 if W0:
                         LOGGER.warning('网页通道取到 %s',api.split("/member/")[-1])
+                        A.fetch_ok+=1
                         return W0
                 return _D
 
@@ -423,6 +427,7 @@ class StateGridDataClient:
                                         B0=Q0.pop(i)
                                         if not Q0:A.push_cache.pop(K0,_D)
                                         LOGGER.warning('命中推送缓存: %s 户号=%s',api,K0[1])
+                                        A.fetch_ok+=1
                                         return B0[0]
                         LOGGER.warning('推送缓存未命中: %s 户号=%s 原因=%s 现有=%s',api,K0[1],
                                        '覆盖不足' if Q0 else '无此键',
@@ -502,6 +507,7 @@ class StateGridDataClient:
                 # （比如暂时还抓不到的阶梯），拿它非空当强制刷新条件的话，每 5 分钟的轮询
                 # 都会被迫重跑一遍整段解析
                 C.push_pending=_N
+                C.fetch_ok=0
                 try:
                         if f:await C.__get_door_number()
                         A6=f or int(time.time()*1000)-C.timestamp>C.refresh_interval*3600*1000
@@ -587,8 +593,12 @@ class StateGridDataClient:
                                         c.reverse();A[A5]=c
                                 else:A[A5]=[]
                                 A['refresh_time']=datetime.datetime.strftime(H,'%Y-%m-%d %H:%M:%S')
-                        # 全部成功才更新 timestamp 并保存
-                        # timestamp 已在 __fetch 中更新为最新请求时间，无需额外设置
+                        # 本轮供上过格子就把"数据新鲜度"推到当下：这句必须在这儿，
+                        # 因为网页优先的一轮可以一次都不碰推送缓存，而原先只有 ingest_push 会推
+                        # timestamp——缺了它，12 小时闸门从 00:36 起就一直是开的，
+                        # 10-10 实测每 5 分钟重跑整轮、一天 953 发网页请求。
+                        # 一格都没供上时仍然不推（让下一轮接着试），异常那条路照旧还原 _orig_ts。
+                        if C.fetch_ok:C.timestamp=int(time.time()*1000)
                         await C.save_data()
                 except Exception:
                         # 裸 except 会把中断现场一起吞掉，排查时什么线索都没有。回溯无条件打：
