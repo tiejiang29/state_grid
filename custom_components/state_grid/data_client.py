@@ -526,6 +526,13 @@ class StateGridDataClient:
                                         # accountBalance 字段存在就用它的真实值（即使为 0）
                                         # 修复：余额为 0 时不能被前面 sumMoney 兜底覆盖
                                         if 'accountBalance' in A[_Y]:A[I]=g
+                                        # 应缴与历史欠费单独落实体：账单制账号（如上海）余额恒为 0，
+                                        # 只能靠这两个键判断"这月该不该去缴"。数据就在这同一份
+                                        # 余额响应里（#14），不用多发一次请求。
+                                        # 必须"键在才写"：缺字段时写 0 会被读成"已缴清"，
+                                        # 而他正是拿这个数做语音播报的
+                                        if 'estiAmt' in A[_Y]:A['esti_amt']=normal_round(AB,2)
+                                        if 'historyOwe' in A[_Y]:A['history_owe']=normal_round(AD,2)
                                 else:LOGGER.error('国家电网账户余额获取失败！')
                                 if I not in A:A[I]=0
                                 await C.__get_door_daily_bill(A,H.year,V,U)

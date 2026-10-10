@@ -26,6 +26,20 @@ SENSOR_TYPES = [
         "state_class": SensorStateClass.TOTAL,
     },
     {
+        "key": "esti_amt",
+        "name": "应缴金额",
+        "native_unit_of_measurement": UNIT_YUAN,
+        "device_class": SensorDeviceClass.MONETARY,
+        "state_class": SensorStateClass.TOTAL,
+    },
+    {
+        "key": "history_owe",
+        "name": "历史欠费",
+        "native_unit_of_measurement": UNIT_YUAN,
+        "device_class": SensorDeviceClass.MONETARY,
+        "state_class": SensorStateClass.TOTAL,
+    },
+    {
         "key": "year_ele_num",
         "name": "年度累计用电",
         "native_unit_of_measurement": UnitOfEnergy.KILO_WATT_HOUR,
