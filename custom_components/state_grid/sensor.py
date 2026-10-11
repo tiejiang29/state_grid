@@ -27,7 +27,7 @@ SENSOR_TYPES = [
     },
     {
         "key": "esti_amt",
-        "name": "应缴金额",
+        "name": "本月电费",
         "native_unit_of_measurement": UNIT_YUAN,
         "device_class": SensorDeviceClass.MONETARY,
         "state_class": SensorStateClass.TOTAL,
