@@ -343,7 +343,7 @@ class WebChannel:
         info = biz.get("userInfo")
         self.user_info = info[0] if isinstance(info, list) and info else (info or {})
         self.expires_at = int(time.time()) + TOKEN_FALLBACK_S
-        LOGGER.warning("网页通道登录成功（%s）：令牌 %d 字符、户号信息 %d 项",
+        LOGGER.debug("网页通道登录成功（%s）：令牌 %d 字符、户号信息 %d 项",
                        "备用标识" if self.account != self.primary_account else "主标识",
                        len(self.token), len(self.user_info))
         return True
@@ -362,7 +362,9 @@ class WebChannel:
                 # 落盘的登录令牌续不动 bearer（NAS 10:31 实测 `20103 请求异常【O10011】`）：
                 # 不重登就等于整轮没有网页通道。这里补一次登录，救不动就交给
                 # async_call 那道锁（本轮内不再逐格去撞一把死令牌）
-                LOGGER.warning("网页通道续 bearer 失败，本轮改用新会话重登一次")
+                # 刷新间隔比 bearer 寿命长得多，所以这是**每轮都会走的正常路径**，
+                # 打在 debug 上；真救不回来的话 380/339 那两条 warning 会说
+                LOGGER.debug("网页通道续 bearer 失败，本轮改用新会话重登一次")
             ids = self._identifiers()
             for acct in ids:
                 self.account = acct
@@ -393,9 +395,12 @@ class WebChannel:
         url = str(_payload(auth).get("redirect_url") or "")
         at = url.find("code=")
         if at < 0:
-            # 只打错误码和站点文案：光打"顶层有哪些键"判不出是解不开还是服务端直接回错
+            # 只打错误码和站点文案：光打"顶层有哪些键"判不出是解不开还是服务端直接回错。
+            # 这一条走 debug：12 小时一轮 vs bearer 约 24 分钟的命，**每轮都会先撞一次**
+            # 死令牌（20103【O10011】），成不成由后面那两条 warning 定性
+            # （339 登录未完成 / 381 被硬拒），这里再吵一句就只剩噪音
             self.last_error = _classify(str(auth.get("code") or ""), _srvrt(auth), auth)
-            LOGGER.warning("网页通道 authorize 没回授权码：code=%s message=%r 载荷键=%s",
+            LOGGER.debug("网页通道 authorize 没回授权码：code=%s message=%r 载荷键=%s",
                            auth.get("code"), str(auth.get("message") or "")[:40],
                            sorted(_payload(auth))[:6])
             return False
@@ -415,7 +420,7 @@ class WebChannel:
                            tok.get("code"), str(tok.get("message") or "")[:40],
                            sorted(biz)[:6])
             return False
-        LOGGER.warning("网页通道 bearer 已换：access_token %d 字符、约 %d 分钟",
+        LOGGER.debug("网页通道 bearer 已换：access_token %d 字符、约 %d 分钟",
                        len(self.access_token), int(self.bearer_deadline - time.time()) // 60)
         # 成功就把上一次的失败原因清掉：这个字段只该表示"最近一次为什么没成"
         self.last_error = ""
@@ -440,7 +445,7 @@ class WebChannel:
     async def async_call(self, api: str, payload: Any) -> dict[str, Any]:
         """取一个业务接口；会话过期就重登一次再试，仍然失败只回空 dict（调用方按缺数处理）。"""
         if self._locked():
-            LOGGER.warning("网页通道处于本轮锁内，%s 直接按缺数处理", api.split("/member/")[-1])
+            LOGGER.debug("网页通道处于本轮锁内，%s 直接按缺数处理", api.split("/member/")[-1])
             return {}
         if not await self.async_ensure_bearer():
             # 进程长跑时 bearer 只有 25 分钟命，而取数按 12 小时走：这一发要是换不动，
@@ -508,7 +513,9 @@ async def async_attach(client) -> "WebChannel | None":
     web = WebChannel(client.hass, async_get_clientsession(client.hass), account, digest,
                      Store(client.hass, 1, STORAGE_KEY_WEB_SESSION), alt)
     if not alt:
-        LOGGER.warning("网页通道没配备用标识：一旦被硬拒（RK001）就只能等明天")
+        # 每轮挂通道都会经过这里，所以只在 debug 说；真被硬拒时 381 那条 warning 会带上
+        # "试过几把标识"，那时才看得见"没配备用标识"的代价
+        LOGGER.debug("网页通道没配备用标识：一旦被硬拒（RK001）就只能等明天")
     if not await web.async_login():
         _attach_streak += 1
         hold = min(RETRY_LOCK_S << (_attach_streak - 1), RETRY_LOCK_MAX_S)
@@ -517,6 +524,6 @@ async def async_attach(client) -> "WebChannel | None":
         return None
     _attach_streak = 0
     _attach_next = 0.0
-    LOGGER.warning("网页通道已挂上：户号信息 %d 项、bearer %d 字符",
+    LOGGER.debug("网页通道已挂上：户号信息 %d 项、bearer %d 字符",
                    len(web.user_info), len(web.access_token))
     return web

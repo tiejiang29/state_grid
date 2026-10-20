@@ -337,7 +337,7 @@ class AppDevice:
             None, generate_device_token, self._profile())
         self.doc.update({"token": gen.token, "token_ms": gen.timestamp_ms})
         await self.async_save()
-        LOGGER.warning("App 通道：重新生成本地设备令牌（%d 字符）", len(gen.token))
+        LOGGER.debug("App 通道：重新生成本地设备令牌（%d 字符）", len(gen.token))
         return gen.token, gen.token_time
 
     @property
@@ -456,7 +456,7 @@ class AppChannel:
             self.raw_accounts = raw
             self.accounts = [AppAccount.from_api(v) for v in raw if isinstance(v, dict)]
             await self.async_save_session()
-            LOGGER.warning("App 通道登录成功：令牌 %d 字符、有效期 %d 天，户号 %d 块",
+            LOGGER.debug("App 通道登录成功：令牌 %d 字符、有效期 %d 天，户号 %d 块",
                            len(self.token), life // 86400, len(self.accounts))
             return True
 

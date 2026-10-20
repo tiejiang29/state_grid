@@ -369,12 +369,12 @@ class StateGridDataClient:
                 # 供数来源必须写进行情：App 通道和 sidecar 走的是同一个入口，
                 # 上一版把这句固定写成 "sidecar 推送入仓"，结果 App 每轮灌数都在日志里
                 # 冒充 sidecar，看不出来到底是谁在供数
-                LOGGER.warning('%s 入仓 %d 份（%d 个键，跳过 %d）',
+                LOGGER.debug('%s 入仓 %d 份（%d 个键，跳过 %d）',
                                (bundle or {}).get('source') or '未标注来源的推送',n,len(cache),len(skipped))
                 return n
         def handle_request_result_message(E,api,result,printResult=_V):
                 D='message';C='resultMessage';A=result
-                if E.is_debug and printResult:LOGGER.warning(api+'-'+json_dumps(A))
+                if E.is_debug and printResult:LOGGER.debug(api+'-'+json_dumps(A))
                 B=_D
                 if _A in A and A[_A]and _f in A[_A]and C in A[_A][_f]:B=A[_A][_f][C]
                 elif _f in A and C in A[_f]:B=A[_f][C]
@@ -404,7 +404,7 @@ class StateGridDataClient:
                 A.userInfo=A.web.user_info or A.userInfo;A.token=A.web.token
                 W0=await A.web.async_call(api,data)
                 if W0:
-                        LOGGER.warning('网页通道取到 %s',api.split("/member/")[-1])
+                        LOGGER.debug('网页通道取到 %s',api.split("/member/")[-1])
                         A.fetch_ok+=1
                         return W0
                 return _D
@@ -426,7 +426,7 @@ class StateGridDataClient:
                                 if _push_covers(api,data,Q0[i]):
                                         B0=Q0.pop(i)
                                         if not Q0:A.push_cache.pop(K0,_D)
-                                        LOGGER.warning('命中推送缓存: %s 户号=%s',api,K0[1])
+                                        LOGGER.debug('命中推送缓存: %s 户号=%s',api,K0[1])
                                         A.fetch_ok+=1
                                         return B0[0]
                         LOGGER.warning('推送缓存未命中: %s 户号=%s 原因=%s 现有=%s',api,K0[1],

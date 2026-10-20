@@ -149,7 +149,7 @@ async def async_fill_cache(hass, client) -> int:
         rows = resp["data"]["sevenEleList"]
         if rows:
             main_ok += 1
-            LOGGER.warning("App 日电量 %s：%d 行，末行 %s=%s",
+            LOGGER.debug("App 日电量 %s：%d 行，末行 %s=%s",
                            a.cons_no_src, len(rows), rows[0]["day"], rows[0].get("dayElePq"))
             items.append({"shape": "daily_ele", "consNo": a.cons_no_src,
                           "period": str(end.year), "response": resp})
@@ -200,6 +200,6 @@ async def async_fill_cache(hass, client) -> int:
         "source": "App 通道推送",
         "items": items,
         "pushed_at": datetime.now(CHINA).isoformat(timespec="seconds")})
-    LOGGER.warning("App 通道本轮取到 %d 份载荷（日电量 %d 份，主窗口 %d 块表）",
+    LOGGER.debug("App 通道本轮取到 %d 份载荷（日电量 %d 份，主窗口 %d 块表）",
                    len(items), len(daily_items), main_ok)
     return count
