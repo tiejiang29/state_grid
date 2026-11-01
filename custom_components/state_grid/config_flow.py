@@ -13,18 +13,24 @@ import hashlib
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import selector
+from homeassistant.helpers.storage import Store
 
 from .app_api import AppChannel
 from .const import DOMAIN
 from .data_client import StateGridDataClient
 from .utils.logger import LOGGER
+from .web_api import STORAGE_KEY_WEB_SESSION, WebChannel
 
 USER_HINT = (
     "取数默认由网页那条纯 HTTP 通道主讲（不开浏览器、不过验证码），App 接口灌进来的那份兜底；"
     "两个选项都能在「配置」里改回 App 优先。\n\n"
     "添加与改密码都走 App 通道：配好之后按刷新间隔取数，默认 12 小时一次（一天两次）。"
     "网页被硬拒（RK001）时会自动改用备用标识，两把都不行就等第二天，不需要你动手。\n\n"
+    "如果 App 那一步被要求过一次滑块/点选验证（我们不做扫码、也不替人过题），配置页会自动"
+    "改问网页那条通道——同一个要求在那边不需要人过题。这条兜底只在被要求时发生，"
+    "密码错、要新设备短信、当天被限流都不会多打一发。\n\n"
     "「上个月抄表」这一格站点给回的就是 0，所以它会显示 0；其余实体都有值。"
 )
 
@@ -67,8 +73,42 @@ async def app_sign_in(hass, account: str, password: str, code: str = "",
     return False, err_key, ""
 
 
+# App 这一步的失败里，只有一类值得再问一次网页：服务端要人过一道腾讯验证（滑块/点选）。
+# 本集成不做扫码、不做过题，App 那侧碰上它就是死路；而**同一组码**（RK007/RK008/RK1003）
+# 在网页那侧是"空手发一发拿题、再补 complexSliderRet 重发"就过的，一次题都不用过。
+# 密码错、要新设备短信、当天被硬拒（RK001）都不在此列：换一条通道去撞同一把标识没有意义，
+# RK001 那发还会多烧一次额度。
+WEB_FALLBACK_APP_ERRORS = frozenset({"captcha_required"})
+
+
+def should_try_web(app_err_key: str) -> bool:
+    """App 登录失败之后，配置页该不该再问一次网页通道。"""
+    return app_err_key in WEB_FALLBACK_APP_ERRORS
+
+
+async def web_sign_in(hass, account: str, password: str) -> tuple[bool, str]:
+    """App 被要求过验证时改问网页：网页登录成功就能建条目。返回 (是否成功, 配置页错误键)。
+
+    这里**不**借 `data_client.async_attach`：那层带跨轮重试闸门（连败越多隔得越久，最长 12
+    小时），是给 12 小时一轮的日常取数用的。配置页上用户每重填一次密码都该真重试一次，
+    不该被闸门悄悄吞掉一句"登录失败"。
+    """
+    web = WebChannel(hass, async_get_clientsession(hass), account,
+                     hashlib.md5(password.encode()).hexdigest(),
+                     Store(hass, 1, STORAGE_KEY_WEB_SESSION), "")
+    if await web.async_login(force=True):
+        return True, ""
+    if web.last_error == "captcha_required":
+        # 两条通道都要人过题了。这时 `captcha_required` 那句会说"App 接口面上我们做不到"，
+        # 对象搞错了——网页这条本来是不用过题的，它也要就说明这个账号当前被要求人工验证
+        return False, "web_captcha_required"
+    # 其余失败原因网页那侧用的是同一套键（rate_limited / invalid_auth / …），直接复用映射
+    return False, APP_ERROR_KEYS.get(web.last_error, "web_login_failed")
+
+
 class StateGridConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """配置步骤：手机号 + 密码，App 通道登录成功就建条目（被要求时多一步短信）。"""
+    """配置步骤：手机号 + 密码。App 通道登录成功就建条目（被要求时多一步短信）；
+    App 被要求过一次滑块/点选验证时改问网页通道，那条不需要人过题。"""
 
     VERSION = 12
 
@@ -97,11 +137,17 @@ class StateGridConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 ok, err_key, code_key = await app_sign_in(self.hass, phone, password)
                 if ok:
-                    return await self._async_finish(phone, password)
+                    return await self._async_finish(phone, password, "App")
                 if code_key:
                     self._pending = {"phone": phone, "password": password,
                                      "code_key": code_key}
                     return await self.async_step_device_verification()
+                if should_try_web(err_key):
+                    # App 那侧要人过一道腾讯验证——这条路我们走不了，改问网页（它不需要人过题）
+                    ok, web_err = await web_sign_in(self.hass, phone, password)
+                    if ok:
+                        return await self._async_finish(phone, password, "网页")
+                    err_key = web_err or err_key
                 errors["base"] = err_key
 
         return self.async_show_form(
@@ -148,8 +194,12 @@ class StateGridConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders={"sms_hint": SMS_HINT},
         )
 
-    async def _async_finish(self, phone: str, password: str):
-        """登录成功之后建条目：凭证只落 store，明文密码不留在这个流程对象里。"""
+    async def _async_finish(self, phone: str, password: str, via: str = "App"):
+        """登录成功之后建条目：凭证只落 store，明文密码不留在这个流程对象里。
+
+        `via` 只影响日志里说清是哪条通道过的——store 里那两项（账号 + 密码摘要）两条通道
+        读同一份，网页通道每轮挂会话时也只要这两样，所以网页建的条目不需要额外字段。
+        """
         self._pending = {}
         dc = StateGridDataClient(hass=self.hass, config=None)
         # 凭证只落 store：App 通道每轮取数读的就是这两项。网页那套会话字段
@@ -161,7 +211,7 @@ class StateGridConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except Exception:
             LOGGER.exception("保存 state_grid.config 失败，但登录已成功。")
         self.hass.data[DOMAIN] = dc
-        LOGGER.warning("[配置] App 通道登录成功，接下来按刷新间隔供数")
+        LOGGER.warning("[配置] %s 通道登录成功，接下来按刷新间隔供数", via)
         return self.async_create_entry(title=f"国家电网 - {phone}", data={})
 
     @staticmethod
