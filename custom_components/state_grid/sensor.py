@@ -22,21 +22,18 @@ SENSOR_TYPES = [
         "key": "balance",
         "name": "账户余额",
         "native_unit_of_measurement": UNIT_YUAN,
-        "device_class": SensorDeviceClass.MONETARY,
         "state_class": SensorStateClass.TOTAL,
     },
     {
         "key": "esti_amt",
         "name": "本月电费",
         "native_unit_of_measurement": UNIT_YUAN,
-        "device_class": SensorDeviceClass.MONETARY,
         "state_class": SensorStateClass.TOTAL,
     },
     {
         "key": "history_owe",
         "name": "历史欠费",
         "native_unit_of_measurement": UNIT_YUAN,
-        "device_class": SensorDeviceClass.MONETARY,
         "state_class": SensorStateClass.TOTAL,
     },
     {
@@ -78,7 +75,6 @@ SENSOR_TYPES = [
         "key": "year_ele_cost",
         "name": "年度累计电费",
         "native_unit_of_measurement": UNIT_YUAN,
-        "device_class": SensorDeviceClass.MONETARY,
         "state_class": SensorStateClass.TOTAL,
     },
     {
@@ -92,7 +88,6 @@ SENSOR_TYPES = [
         "key": "last_month_ele_cost",
         "name": "上个月电费",
         "native_unit_of_measurement": UNIT_YUAN,
-        "device_class": SensorDeviceClass.MONETARY,
         "state_class": SensorStateClass.TOTAL,
     },
     {
