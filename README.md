@@ -6,6 +6,10 @@
 
 取数与解析逻辑沿用 [bilezhou/state_grid](https://github.com/bilezhou/state_grid)（MIT），未改语义。
 
+## 本 fork 相对上游的改动
+
+- **移除 monetary 实体的 `device_class`**：`balance`/`esti_amt`/`history_owe`/`year_ele_cost`/`last_month_ele_cost` 这 5 个"元"单位实体原本设了 `device_class = MONETARY`。HA 规范要求 monetary 实体用 ISO 货币代码（如 CNY），"元"不是，导致 button-card 等前端把它当货币代码格式化、报 `Invalid currency code` 且金额显示为空。本 fork 移除这些实体的 `device_class`，保留"元"单位与 `state_class`，金额正常显示。
+
 ## 它是怎么工作的
 
 ```
