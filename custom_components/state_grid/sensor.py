@@ -15,6 +15,11 @@ from .data_client import StateGridDataClient
 from .coordinator import StateGridCoordinator
 
 UNIT_YUAN = "元"
+# 金额那几格不带 device_class：HA 的 monetary 要求单位是 ISO 货币代码，而"元"不是——
+# 前端（button-card 这类）会把 unit_of_measurement 当货币代码丢给 Intl.NumberFormat，
+# 直接抛 Invalid currency code、金额显示成空白。core 侧不校验，所以日志里看不出问题。
+# 图标原本是靠 device_class 给的，去掉之后得自己点名，不然这五格会退回默认图标。
+ICON_YUAN = "mdi:cash"
 ENTITY_ID_SENSOR_FORMAT = SENSOR_DOMAIN + ".state_grid_"
 
 SENSOR_TYPES = [
@@ -22,21 +27,21 @@ SENSOR_TYPES = [
         "key": "balance",
         "name": "账户余额",
         "native_unit_of_measurement": UNIT_YUAN,
-        "device_class": SensorDeviceClass.MONETARY,
+        "icon": ICON_YUAN,
         "state_class": SensorStateClass.TOTAL,
     },
     {
         "key": "esti_amt",
         "name": "本月电费",
         "native_unit_of_measurement": UNIT_YUAN,
-        "device_class": SensorDeviceClass.MONETARY,
+        "icon": ICON_YUAN,
         "state_class": SensorStateClass.TOTAL,
     },
     {
         "key": "history_owe",
         "name": "历史欠费",
         "native_unit_of_measurement": UNIT_YUAN,
-        "device_class": SensorDeviceClass.MONETARY,
+        "icon": ICON_YUAN,
         "state_class": SensorStateClass.TOTAL,
     },
     {
@@ -78,7 +83,7 @@ SENSOR_TYPES = [
         "key": "year_ele_cost",
         "name": "年度累计电费",
         "native_unit_of_measurement": UNIT_YUAN,
-        "device_class": SensorDeviceClass.MONETARY,
+        "icon": ICON_YUAN,
         "state_class": SensorStateClass.TOTAL,
     },
     {
@@ -92,7 +97,7 @@ SENSOR_TYPES = [
         "key": "last_month_ele_cost",
         "name": "上个月电费",
         "native_unit_of_measurement": UNIT_YUAN,
-        "device_class": SensorDeviceClass.MONETARY,
+        "icon": ICON_YUAN,
         "state_class": SensorStateClass.TOTAL,
     },
     {
@@ -235,6 +240,8 @@ class StateGridSensor(CoordinatorEntity[StateGridCoordinator], SensorEntity):
         self._attr_unique_id = entry_id + "-" + cons_no + "-" + key
         if "device_class" in sensor_type:
             self._attr_device_class = sensor_type["device_class"]
+        if "icon" in sensor_type:
+            self._attr_icon = sensor_type["icon"]
         if "state_class" in sensor_type:
             self._attr_state_class = sensor_type["state_class"]
         if "native_unit_of_measurement" in sensor_type:
